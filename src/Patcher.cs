@@ -581,6 +581,104 @@ class Patcher
                 }
             }
 
+            // ============================================================
+            // 补丁点 5：PageDownloadResourceDetail —— 资源页整合包「安装」按钮
+            // 列表项的 ToListItem(ClickHandler, SaveAsButtonHandler, IsBadDisplay)，
+            // 上游把 ClickHandler 传成了 ldnull，导致点击只能走「保存」。
+            // 补丁：把该 ldnull 换成指向 Install_Click 的委托。
+            // ============================================================
+            {
+                var t = mod.GetType("PCL.PageDownloadResourceDetail");
+                var m = t == null ? null : t.Methods.FirstOrDefault(x =>
+                    x.Name == "InitializeStackResourceVersions" && x.HasBody);
+                bool done5 = false;
+
+                if (m != null)
+                {
+                    var installClick = t.Methods.FirstOrDefault(x => x.Name == "Install_Click");
+                    var pdi5Field = t.Fields.FirstOrDefault(f => f.Name == "TargetResourceType");
+                    // ClickEventHandler 的 .ctor 从 Save_Click 那处借用
+                    MethodReference clickCtor = null;
+                    var list5 = m.Body.Instructions.ToList();
+                    int toListIdx = -1;
+                    for (int i = 0; i < list5.Count; i++)
+                    {
+                        var mr = list5[i].Operand as MethodReference;
+                        if (mr == null) continue;
+                        // 先记录 ClickEventHandler 的 .ctor（出现在 ToListItem 之前）
+                        if (mr.Name == ".ctor" && mr.DeclaringType.Name == "ClickEventHandler"
+                            && clickCtor == null)
+                            clickCtor = mr;
+                        if (mr.Name == "ToListItem" && mr.DeclaringType.Name == "ResourceVersion")
+                        { toListIdx = i; break; }
+                    }
+
+                    if (installClick != null && clickCtor != null && toListIdx > 3)
+                    {
+                        // ToListItem 之前的完整形态：
+                        //   ldarg.0 / ldftn Save_Click / newobj ClickEventHandler   (ClickHandler 参数)
+                        //   ldnull                                                  (SaveAsButtonHandler)
+                        //   ldloc.1                                                 (IsBadDisplay)
+                        // 整合包场景下 ClickHandler 应指向 Install_Click（点击即安装），
+                        // 因此把 ldftn 的目标从 Save_Click 换成 Install_Click。
+                        var ldftnIns = (from x in list5.Take(toListIdx)
+                                        where x.OpCode == OpCodes.Ldftn
+                                           && x.Operand is MethodReference
+                                           && ((MethodReference)x.Operand).Name == "Save_Click"
+                                        select x).LastOrDefault();
+
+                        if (ldftnIns == null)
+                        {
+                            Console.WriteLine("  [5/5] 资源页安装按钮 ................ 形态不符，跳过");
+                        }
+                        else
+                        {
+                            // 只在整合包(ModPack=2)时把 ClickHandler 指向 Install_Click，
+                            // 其他资源类型仍走原来的 Save_Click。
+                            //
+                            // 目标形态（插在原 ldarg.0 之前）：
+                            //   ldarg.0
+                            //   ldfld TargetResourceType
+                            //   ldc.i4.2
+                            //   bne.un  keepSave                 // 非整合包 -> 保存
+                            //   ldarg.0
+                            //   ldftn   Install_Click
+                            //   br      afterAll
+                            // keepSave:
+                            //   ldarg.0                          // 原有的两条
+                            //   ldftn   Save_Click               // 原有的那条
+                            // afterAll:
+                            //   nop
+                            //   newobj  ClickEventHandler        // 原有
+                            var il5 = m.Body.GetILProcessor();
+                            var saveLdftn = ldftnIns;
+                            var saveLdarg = saveLdftn.Previous;   // 原有的 ldarg.0
+                            var afterAll = il5.Create(OpCodes.Nop);
+                            var brSkip = il5.Create(OpCodes.Br, afterAll);
+
+                            // 插在原有 ldarg.0 之前
+                            il5.InsertBefore(saveLdarg, il5.Create(OpCodes.Ldarg_0));
+                            il5.InsertBefore(saveLdarg, il5.Create(OpCodes.Ldfld, mod.ImportReference(pdi5Field)));
+                            il5.InsertBefore(saveLdarg, il5.Create(OpCodes.Ldc_I4_2));
+                            il5.InsertBefore(saveLdarg, il5.Create(OpCodes.Bne_Un, saveLdarg)); // 非 2 -> 走原路径
+
+                            // 整合包分支 + 跳过原路径
+                            il5.InsertBefore(saveLdarg, il5.Create(OpCodes.Ldarg_0));
+                            il5.InsertBefore(saveLdarg, il5.Create(OpCodes.Ldftn, mod.ImportReference(installClick)));
+                            il5.InsertBefore(saveLdarg, brSkip);
+
+                            // 原路径结束后汇合
+                            il5.InsertAfter(saveLdftn, afterAll);
+
+                            done5 = true;
+                        }
+                    }
+                }
+                Console.WriteLine(done5
+                    ? "  [5/5] 资源页安装按钮 ................ 已恢复"
+                    : "  [5/5] 资源页安装按钮 ................ 未定位，跳过");
+            }
+
             // ---------- 写盘 ----------
             asm.Write(tmp);
 

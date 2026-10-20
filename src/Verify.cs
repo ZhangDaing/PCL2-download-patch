@@ -98,6 +98,22 @@ class Verify
             }
         }
 
+        // ---------- 检查点 5：资源页整合包「安装」按钮 ----------
+        {
+            var t = mod.GetType("PCL.PageDownloadResourceDetail");
+            var m = t == null ? null : t.Methods.FirstOrDefault(x =>
+                x.Name == "InitializeStackResourceVersions" && x.HasBody);
+            if (m == null) { Console.WriteLine("  [??] InitializeStackResourceVersions 未找到"); unknown++; }
+            else
+            {
+                bool hasInstall = m.Body.Instructions.Any(i =>
+                    i.OpCode == OpCodes.Ldftn && i.Operand is MethodReference &&
+                    ((MethodReference)i.Operand).Name == "Install_Click");
+                if (hasInstall) Console.WriteLine("  [OK] 资源页安装按钮");
+                else { Console.WriteLine("  [!!] 资源页安装按钮 —— 仍只提供保存"); fail++; }
+            }
+        }
+
         Console.WriteLine();
         if (fail == 0 && unknown == 0)
         {
