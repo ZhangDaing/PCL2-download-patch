@@ -7,13 +7,13 @@ set "TARGET=%~1"
 if not "%TARGET%"=="" goto :have_target
 if exist "%~dp0..\Plain Craft Launcher 2.exe" set "TARGET=%~dp0..\Plain Craft Launcher 2.exe"
 if not "%TARGET%"=="" goto :have_target
-if exist "D:\minecraft\Plain Craft Launcher 2.exe" set "TARGET=D:\minecraft\Plain Craft Launcher 2.exe"
+if exist "%USERPROFILE%\Desktop\Plain Craft Launcher 2.exe" set "TARGET=%USERPROFILE%\Desktop\Plain Craft Launcher 2.exe"
 if not "%TARGET%"=="" goto :have_target
-if exist "C:\minecraft\Plain Craft Launcher 2.exe" set "TARGET=C:\minecraft\Plain Craft Launcher 2.exe"
+
 
 if "%TARGET%"=="" (
     echo [错误] 找不到 Plain Craft Launcher 2.exe
-    echo        请传入路径，例如: restore.bat "D:\minecraft\Plain Craft Launcher 2.exe"
+    echo        请传入路径，例如: restore.bat "C:\你的PCL目录\Plain Craft Launcher 2.exe"
     pause
     exit /b 2
 )

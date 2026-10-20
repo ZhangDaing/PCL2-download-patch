@@ -15,15 +15,15 @@ if not "%TARGET%"=="" goto :have_target
 echo 未指定路径，正在自动查找...
 if exist "%HERE%..\Plain Craft Launcher 2.exe" set "TARGET=%HERE%..\Plain Craft Launcher 2.exe"
 if not "%TARGET%"=="" goto :have_target
-if exist "D:\minecraft\Plain Craft Launcher 2.exe" set "TARGET=D:\minecraft\Plain Craft Launcher 2.exe"
+if exist "%USERPROFILE%\Desktop\Plain Craft Launcher 2.exe" set "TARGET=%USERPROFILE%\Desktop\Plain Craft Launcher 2.exe"
 if not "%TARGET%"=="" goto :have_target
-if exist "C:\minecraft\Plain Craft Launcher 2.exe" set "TARGET=C:\minecraft\Plain Craft Launcher 2.exe"
+
 if not "%TARGET%"=="" goto :have_target
 
 echo.
 echo [错误] 找不到 Plain Craft Launcher 2.exe
 echo        请把 exe 路径作为参数传入，例如：
-echo        apply.bat "D:\minecraft\Plain Craft Launcher 2.exe"
+echo        apply.bat "C:\你的PCL目录\Plain Craft Launcher 2.exe"
 echo.
 pause
 exit /b 2

@@ -27,7 +27,7 @@
 如果自动找不到 PCL，手动指定路径：
 
 ```
-apply.bat "D:\minecraft\Plain Craft Launcher 2.exe"
+apply.bat "C:\你的PCL目录\Plain Craft Launcher 2.exe"
 ```
 
 然后启动 PCL，下载页应该能看到原版版本列表了。
@@ -43,7 +43,7 @@ apply.bat "D:\minecraft\Plain Craft Launcher 2.exe"
 ## 查看补丁状态
 
 ```
-bin\Verify.exe "D:\minecraft\Plain Craft Launcher 2.exe"
+bin\Verify.exe "C:\你的PCL目录\Plain Craft Launcher 2.exe"
 ```
 
 - `PASS` —— 补丁生效中
