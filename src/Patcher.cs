@@ -595,6 +595,16 @@ class Patcher
 
                 if (m != null)
                 {
+                    // 幂等：已经打过本补丁（存在 Install_Click 引用）就直接跳过
+                    bool alreadyPatched5 = m.Body.Instructions.Any(x =>
+                        x.OpCode == OpCodes.Ldftn && x.Operand is MethodReference &&
+                        ((MethodReference)x.Operand).Name == "Install_Click");
+                    if (alreadyPatched5)
+                    {
+                        Console.WriteLine("  [5/5] 资源页安装按钮 ................ 已是恢复状态");
+                        goto AfterPoint5;
+                    }
+
                     var installClick = t.Methods.FirstOrDefault(x => x.Name == "Install_Click");
                     var pdi5Field = t.Fields.FirstOrDefault(f => f.Name == "TargetResourceType");
                     // ClickEventHandler 的 .ctor 从 Save_Click 那处借用
@@ -678,6 +688,7 @@ class Patcher
                     ? "  [5/5] 资源页安装按钮 ................ 已恢复"
                     : "  [5/5] 资源页安装按钮 ................ 未定位，跳过");
             }
+            AfterPoint5: ;
 
             // ---------- 写盘 ----------
             asm.Write(tmp);
