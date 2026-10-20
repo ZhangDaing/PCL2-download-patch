@@ -1,13 +1,13 @@
 # PCL2 MC Download Restore Patch
 
-修复 Plain Craft Launcher 2 **2.99.0.0** 及其后续版本中「下载原版 Minecraft」功能被移除的问题。
+修复 Plain Craft Launcher 2 **2.99.0.0** 及其后续版本中与 MC 下载相关的功能被移除的问题。
 
 > **本项目的绝大部分代码、文档与测试由 AI（Claude / DeepSeek 驱动的编码代理）生成。**
 > 详见下方 [AI 生成内容声明](#ai-生成内容声明)。
 
 ---
 
-## 这是什么
+## 修复了什么
 
 PCL 2.99.0.0 在 `ModSecret.vb` 里加入了：
 
@@ -16,10 +16,19 @@ Public Const RestrictMcDownload As Boolean = True
 ```
 
 由于 `Const` 是**编译期内联**的，VB 编译器把 `If True Then ... Else ...` 的 `Else`
-分支当作死代码**整段删除**。结果是在 2.99 的 IL 里，真正加载原版版本列表的那行
-`DlClientListLoader` 绑定**已不复存在**。
+分支当作死代码**整段删除**，并使 `AndAlso Not True` 这类表达式恒假。
+在 2.99 的 IL 里，多处真实逻辑已**不复存在**。
 
-本项目提供一个 IL 层补丁器，把这一处引用重建回来：
+本补丁修复 **4 个位置**：
+
+| # | 位置 | 症状 | 修复方式 |
+|---|---|---|---|
+| 1 | `PageDownloadInstall.LoaderInit` | 下载页原版版本列表无法加载 | 重建 `DlClientListLoader` 绑定 |
+| 2 | `PageDownloadModify` | 版本设置里「修改 MC 版本」卡片被隐藏 | `Collapsed` → `Visible` |
+| 3 | `ModpackInstall(String,String,String)` | 整合包安装到一半必抛异常 | 移除人为 `throw` |
+| 4 | `ModpackInstall()` | 整合包安装入口只弹提示 | 重建「选文件 → 线程安装」入口 |
+
+### 位置 1 的前后对比
 
 | | `PageDownloadInstall.LoaderInit` |
 |---|---|
@@ -76,12 +85,13 @@ PCL 更新是整包替换 exe，任何字节级修改都会丢失。**更新后�
 补丁器用特征匹配而非硬编码偏移，通常可跨小版本使用；若 PCL 重构了
 `LoaderInit`，补丁器会**安全拒绝**（不会写坏文件），届时需更新本工具。
 
-### 2. 只修复「原版版本列表加载」这一处
-本补丁只改 `LoaderInit`。以下位置**未改动**：
+### 2. 未覆盖的位置
+本补丁修复上述 4 处，但仍有一处**未改动**：
 
-- 整合包安装（`ModModpack`）
-- 版本设置里的「修改 MC 版本」卡片（`PageDownloadModify`）
 - 资源详情页整合包「安装」按钮（`PageDownloadCompDetail`）
+
+经比对，该处逻辑在 **2.14 中就已经是这样的**，并非 2.99 新增的删除，
+因此不属于本次更新引入的问题。
 
 ### 3. exe 哈希改变
 补丁后文件哈希与官方发布版不同。PCL 2.99 源码中未见完整性自校验，
@@ -93,6 +103,10 @@ PCL 更新是整包替换 exe，任何字节级修改都会丢失。**更新后�
 
 ### 5. 仅支持与 PCL 相同的环境
 Windows + .NET Framework 4.8。
+
+### 6. 补丁后仍需实机确认
+补丁器提供的是**静态校验**（方法形态 + JIT 合法性），
+无法替代真实运行。若某个功能仍不工作，请附上错误信息反馈。
 
 ---
 
@@ -166,7 +180,9 @@ Windows + .NET Framework 4.8。
 - 不存在「把 True 改成 False」这种改法
 - 只能逐个修改使用点的 IL
 
-本补丁只针对唯一影响版本列表加载的那一处。
+**注意**：如果从源码把 `RestrictMcDownload` 改成 `False` 再**重新编译**，
+是一次性解决所有位置的正规做法。本项目选择 IL 补丁，是因为用户手上
+通常只有一个已编译的 exe。
 </details>
 
 <details>

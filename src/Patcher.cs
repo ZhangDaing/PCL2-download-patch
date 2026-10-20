@@ -37,7 +37,9 @@ class Patcher
 
         try
         {
+            // 依赖在运行时从目标 exe 自身解出，仓库不附带任何 PCL 二进制
             var resolver = new EmbeddedResolver(src);
+            resolver.ExtractDependencies();
             var asm = AssemblyDefinition.ReadAssembly(src, new ReaderParameters
             {
                 ReadWrite = false,
@@ -170,9 +172,288 @@ class Patcher
             var il = body.GetILProcessor();
             foreach (var ins in deadZone) il.Remove(ins);
             il.InsertBefore(list[end + 1], il.Create(OpCodes.Ldsfld, mod.ImportReference(realLoaderField)));
+            Console.WriteLine("  [1/4] 下载页原版版本列表 ............ 已恢复");
+
+            // ============================================================
+            // 补丁点 2：PageDownloadModify —— 「修改 MC 版本」卡片
+            // 源码：CardMinecraft.Visibility = If(RestrictMcDownload, Collapsed, Visible)
+            // DCE 后变成常量 ldc.i4.2 (Collapsed)，改回 ldc.i4.0 (Visible)
+            // ============================================================
+            {
+                var t = mod.GetType("PCL.PageDownloadModify");
+                bool done = false, already = false;
+                if (t != null)
+                {
+                    foreach (var m in t.Methods.Where(x => x.HasBody).ToList())
+                    {
+                        var ins = m.Body.Instructions;
+                        for (int i = 0; i < ins.Count; i++)
+                        {
+                            if (!(ins[i].OpCode == OpCodes.Callvirt)) continue;
+                            var mr = ins[i].Operand as MethodReference;
+                            if (mr == null || mr.Name != "get_CardMinecraft") continue;
+                            for (int j = i + 1; j < Math.Min(i + 4, ins.Count); j++)
+                            {
+                                if (ins[j].OpCode == OpCodes.Ldc_I4_2 &&
+                                    j + 1 < ins.Count && ins[j + 1].OpCode == OpCodes.Callvirt &&
+                                    ((MethodReference)ins[j + 1].Operand).Name == "set_Visibility")
+                                {
+                                    ins[j].OpCode = OpCodes.Ldc_I4_0;
+                                    ins[j].Operand = null;
+                                    done = true;
+                                }
+                                else if (ins[j].OpCode == OpCodes.Ldc_I4_0)
+                                {
+                                    already = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (done) Console.WriteLine("  [2/4] 修改 MC 版本卡片 .............. 已恢复");
+                else if (already) Console.WriteLine("  [2/4] 修改 MC 版本卡片 .............. 已是恢复状态");
+                else Console.WriteLine("  [2/4] 修改 MC 版本卡片 .............. 未定位，跳过");
+            }
+
+            // ============================================================
+            // 补丁点 3：ModpackInstall(String,String,String) —— 主体守卫
+            // 源码在“执行对应的安装方法”前插入 Throw。编译后该 throw 落在
+            // catch 块出口处：所有正常路径 leave 到这里后立即抛异常，
+            // 使整个安装流程必然失败。
+            // 修法：删除这 3 条（ldstr/newobj/throw），让正常路径直接落入 finally。
+            // ============================================================
+            {
+                var t = mod.GetType("PCL.ModModpack");
+                var m = t == null ? null : t.Methods.FirstOrDefault(x =>
+                    x.Name == "ModpackInstall" && x.Parameters.Count == 3 && x.HasBody);
+                bool done = false;
+                if (m != null)
+                {
+                    var list3 = m.Body.Instructions.ToList();
+                    for (int i = 0; i < list3.Count - 2; i++)
+                    {
+                        if (list3[i].OpCode != OpCodes.Ldstr) continue;
+                        string s = list3[i].Operand as string;
+                        if (s == null || (s != StubName && !s.Contains(Magic))) continue;
+                        if (list3[i + 1].OpCode != OpCodes.Newobj) continue;
+                        if (list3[i + 2].OpCode != OpCodes.Throw) continue;
+                        var mr = list3[i + 1].Operand as MethodReference;
+                        if (mr == null || mr.DeclaringType.Name != "Exception") continue;
+
+                        // 该 3 条（ldstr/newobj Exception/throw）位于 catch 之后、
+                        // 外层 finally 的 try 范围末尾。所有正常路径 leave 到这里。
+                        // 不能删除（会让 leave 落入 finally handler，非法），
+                        // 也不能改 nop（会让异常块边界失效）。
+                        // 正确做法：原地改成「读出方法返回值并返回」——
+                        // 等价于正常完成。这里改为 leave 到方法最后一条 ret。
+                        Instruction finalRet = null;
+                        foreach (var x in list3)
+                            if (x.OpCode == OpCodes.Ret) finalRet = x;
+                        if (finalRet == null) { Console.WriteLine("  [3/4] 整合包安装主体 ................ 找不到 ret，跳过"); }
+                        else
+                        {
+                            var il3 = m.Body.GetILProcessor();
+                            il3.Replace(list3[i], il3.Create(OpCodes.Ldloc_0));   // 装载结果
+                            il3.Replace(list3[i + 1], il3.Create(OpCodes.Leave, finalRet));
+                            il3.Remove(list3[i + 2]);                              // 去掉 throw
+                        }
+                        done = true;
+                        break;
+                    }
+                }
+                if (done) Console.WriteLine("  [3/4] 整合包安装主体 ................ 已恢复");
+                else
+                {
+                    bool stillBlocked = m != null && m.Body.Instructions.Any(x => x.OpCode == OpCodes.Ldstr
+                        && x.Operand is string && (x.Operand as string) == StubName);
+                    if (m != null && !stillBlocked) Console.WriteLine("  [3/4] 整合包安装主体 ................ 已是恢复状态");
+                    else Console.WriteLine("  [3/4] 整合包安装主体 ................ 未定位，跳过");
+                }
+            }
+
+            // ============================================================
+            // 补丁点 4：ModpackInstall() —— 整合包安装入口
+            // 入口被替换成仅弹提示，但其依赖的表达式（SelectFile 的元组数组重载）
+            // 在 2.99 里已不再被任何方法引用，无法从本 exe 内重建。
+            // 因此本补丁不尝试重建：整合包安装可通过 [下载页 → 资源 → 整合包]
+            // 或把压缩包拖入窗口触发（那些入口同样调用本方法，实测需另行处理）。
+            // ============================================================
+            {
+                var t = mod.GetType("PCL.ModModpack");
+                var entry = t == null ? null : t.Methods.FirstOrDefault(x =>
+                    x.Name == "ModpackInstall" && x.Parameters.Count == 0 && x.HasBody);
+
+                bool already = entry != null && entry.Body.Instructions.Any(i =>
+                    i.OpCode == OpCodes.Call && i.Operand is MethodReference &&
+                    ((MethodReference)i.Operand).Name == "RunInThread");
+
+                if (entry == null) Console.WriteLine("  [4/4] 整合包安装入口 ................ 未找到，跳过");
+                else if (already) Console.WriteLine("  [4/4] 整合包安装入口 ................ 已是恢复状态");
+                else
+                {
+                    // 从本 exe 其它方法里借用一个现存的 SelectFile 引用（签名完全一致）
+                    MethodReference selectFile = null, runInThread = null, actionCtor = null;
+                    foreach (var tt in mod.GetTypes())
+                    {
+                        foreach (var mm in tt.Methods)
+                        {
+                            if (!mm.HasBody) continue;
+                            foreach (var ins in mm.Body.Instructions)
+                            {
+                                var mr = ins.Operand as MethodReference;
+                                if (mr == null) continue;
+                                if (mr.Name == "SelectFile" && mr.DeclaringType.Name == "Dialogs") selectFile = mr;
+                                else if (mr.Name == "RunInThread" && mr.DeclaringType.Name == "ModBase") runInThread = mr;
+                            }
+                        }
+                    }
+
+                    var closureType = t.NestedTypes.FirstOrDefault(x => x.Name.StartsWith("_Closure$__0-0"));
+                    var lambda = closureType == null ? null : closureType.Methods.FirstOrDefault(x => x.Name == "_Lambda$__0");
+                    var fileField = closureType == null ? null : closureType.Fields.FirstOrDefault(x => x.Name.Contains("VB$Local_File"));
+                    var closureCtor = closureType == null ? null : closureType.Methods.FirstOrDefault(x => x.IsConstructor && !x.IsStatic);
+
+                    if (selectFile == null || runInThread == null || lambda == null ||
+                        fileField == null || closureCtor == null)
+                    {
+                        Console.WriteLine("  [4/4] 整合包安装入口 ................ 依赖不全，跳过");
+                    }
+                    else
+                    {
+                        // 复用「现成的 SelectFile 调用」：本 exe 里有 7 处同签名调用，
+                        // 其中 ManuallyImportJava 用的是「字符串过滤器」的简单形态：
+                        //   ldstr "java.exe|java.exe"; call OneOf.op_Implicit(string);
+                        //   newobj Nullable::.ctor; call SelectFile
+                        // 这里采用同一模式，但传空字符串表示不限制过滤器。
+                        var nb = new MethodBody(entry);
+                        nb.MaxStackSize = 8;
+                        var n2 = nb.GetILProcessor();
+                        var cv = new VariableDefinition(mod.ImportReference(closureType));
+                        nb.Variables.Add(cv);
+                        var fileVar = new VariableDefinition(mod.TypeSystem.String);
+                        nb.Variables.Add(fileVar);
+
+                        n2.Emit(OpCodes.Newobj, mod.ImportReference(closureCtor));
+                        n2.Emit(OpCodes.Stloc, cv);
+
+                        var nullableT = selectFile.Parameters[3].ParameterType as GenericInstanceType;
+                        var oneOfT = nullableT == null ? null : nullableT.GenericArguments[0] as GenericInstanceType;
+                        if (oneOfT == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 类型异常，跳过"); goto SkipFour; }
+
+                        n2.Emit(OpCodes.Ldstr, "选择整合包压缩文件");
+                        n2.Emit(OpCodes.Ldc_I4_0);
+                        n2.Emit(OpCodes.Ldnull);
+
+                        // op_Implicit(T2) -> OneOf<...>
+                        // 关键：参数类型必须是「开放泛型占位 !1」，不能写死成 string，
+                        // 否则元数据里找不到匹配的重载（MissingMethodException）。
+                        GenericParameter gp = null;
+                        try
+                        {
+                            var oneOfDef = oneOfT.ElementType.Resolve();
+                            gp = oneOfDef.GenericParameters[1]; // T2
+                        }
+                        catch { }
+                        if (gp == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 泛型占位解析失败，跳过"); goto SkipFour; }
+
+                        // 直接借用 ModJava::ManuallyImportJava 里那条已验证正确的
+                        // op_Implicit / Nullable::.ctor / SelectFile 引用，
+                        // 它们是同一个模块内的真实对象，元数据天然正确。
+                        MethodReference opImp = null, nlCtor = null;
+                        {
+                            var mj = mod.GetType("PCL.ModJava");
+                            var mm = mj == null ? null : mj.Methods.FirstOrDefault(x => x.Name == "ManuallyImportJava" && x.HasBody);
+                            if (mm != null)
+                            {
+                                foreach (var ins in mm.Body.Instructions)
+                                {
+                                    var mr = ins.Operand as MethodReference;
+                                    if (mr == null) continue;
+                                    if (mr.Name == "op_Implicit" && opImp == null) opImp = mr;
+                                    if (mr.Name == ".ctor" && mr.DeclaringType.Name == "Nullable`1" && nlCtor == null) nlCtor = mr;
+                                }
+                            }
+                        }
+                        // SelectFile 的第 4 参数 filter 本身是 Optional，默认值就是 default(Nullable<OneOf<...>>)。
+                        // 直接构造 default 值即可，彻底绕开 op_Implicit 的泛型元数据问题。
+                        var nlLocal = new VariableDefinition(mod.ImportReference(nullableT));
+                        nb.Variables.Add(nlLocal);
+                        n2.Emit(OpCodes.Ldloca, nlLocal);
+                        n2.Emit(OpCodes.Initobj, mod.ImportReference(nullableT));
+                        n2.Emit(OpCodes.Ldloc, nlLocal);
+
+                        // Nullable<OneOf<...>>::.ctor 已经在上面用借来的 nlCtor 完成
+
+                        n2.Emit(OpCodes.Call, mod.ImportReference(selectFile));
+
+                        MethodReference firstOrDefault = null;
+                        foreach (var tt in mod.GetTypes())
+                        {
+                            foreach (var mm in tt.Methods)
+                            {
+                                if (firstOrDefault != null || !mm.HasBody) continue;
+                                foreach (var ins in mm.Body.Instructions)
+                                {
+                                    var mr = ins.Operand as MethodReference;
+                                    if (mr != null && mr.Name == "FirstOrDefault" && mr.Parameters.Count == 1)
+                                    { firstOrDefault = mr; break; }
+                                }
+                            }
+                            if (firstOrDefault != null) break;
+                        }
+                        if (firstOrDefault == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 缺 FirstOrDefault，跳过"); goto SkipFour; }
+
+                        n2.Emit(OpCodes.Call, mod.ImportReference(firstOrDefault));
+                        n2.Emit(OpCodes.Stloc, fileVar);
+
+                        n2.Emit(OpCodes.Ldloc, cv);
+                        n2.Emit(OpCodes.Ldloc, fileVar);
+                        n2.Emit(OpCodes.Stfld, mod.ImportReference(fileField));
+
+                        var skip = n2.Create(OpCodes.Ret);
+
+                        MethodReference isEmpty = null;
+                        foreach (var tt in mod.GetTypes())
+                        {
+                            foreach (var mm in tt.Methods)
+                            {
+                                if (isEmpty != null || !mm.HasBody) continue;
+                                foreach (var ins in mm.Body.Instructions)
+                                {
+                                    var mr = ins.Operand as MethodReference;
+                                    if (mr != null && mr.Name == "IsNullOrEmpty" && mr.DeclaringType.Name == "String")
+                                    { isEmpty = mr; break; }
+                                }
+                            }
+                            if (isEmpty != null) break;
+                        }
+                        if (isEmpty == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 缺 IsNullOrEmpty，跳过"); goto SkipFour; }
+
+                        n2.Emit(OpCodes.Ldloc, cv);
+                        n2.Emit(OpCodes.Ldfld, mod.ImportReference(fileField));
+                        n2.Emit(OpCodes.Call, mod.ImportReference(isEmpty));
+                        n2.Emit(OpCodes.Brtrue, skip);
+
+                        n2.Emit(OpCodes.Ldloc, cv);
+                        n2.Emit(OpCodes.Ldftn, mod.ImportReference(lambda));
+                        TypeReference actionType = null;
+                        foreach (var tr in mod.GetTypeReferences()) if (tr.Name == "Action") { actionType = tr; break; }
+                        if (actionType == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 缺 Action，跳过"); goto SkipFour; }
+                        var ac = new MethodReference(".ctor", mod.TypeSystem.Void, actionType) { HasThis = true };
+                        ac.Parameters.Add(new ParameterDefinition(mod.TypeSystem.Object));
+                        ac.Parameters.Add(new ParameterDefinition(mod.TypeSystem.IntPtr));
+                        n2.Emit(OpCodes.Newobj, mod.ImportReference(ac));
+                        n2.Emit(OpCodes.Call, mod.ImportReference(runInThread));
+
+                        n2.Append(skip);
+                        entry.Body = nb;
+                        Console.WriteLine("  [4/4] 整合包安装入口 ................ 已恢复");
+                    }
+                SkipFour: ;
+                }
+            }
 
             // ---------- 写盘 ----------
-            asm.Write(tmp);
             asm.Write(tmp);
 
             // 写盘后再回读校验一次，确保产物可加载
@@ -219,6 +500,7 @@ class Patcher
     {
         readonly string exePath;
         readonly string baseDir;
+        readonly string depsDir;
         readonly Dictionary<string, AssemblyDefinition> cache = new Dictionary<string, AssemblyDefinition>();
         readonly Dictionary<string, byte[]> embedded = new Dictionary<string, byte[]>();
         bool scanned;
@@ -227,6 +509,7 @@ class Patcher
         {
             exePath = path;
             baseDir = Path.GetDirectoryName(Path.GetFullPath(path));
+            depsDir = Path.Combine(baseDir, ".pclpatch-deps");
         }
 
         void Scan()
@@ -363,7 +646,47 @@ class Patcher
             catch { return false; }
         }
 
-        public AssemblyDefinition Resolve(AssemblyNameReference name) { return Resolve(name, new ReaderParameters()); }
+        public AssemblyDefinition Resolve(AssemblyNameReference name)
+        {
+            return Resolve(name, new ReaderParameters());
+        }
+
+        // 把目标 exe 内嵌资源里的依赖 DLL 解到临时目录，供 Cecil 解析。
+        // 这样补丁器自身不携带、也不分发任何 PCL 的二进制文件。
+        public void ExtractDependencies()
+        {
+            if (Directory.Exists(depsDir)) return;
+            try
+            {
+                Directory.CreateDirectory(depsDir);
+                using (var raw = AssemblyDefinition.ReadAssembly(exePath,
+                    new ReaderParameters { ReadingMode = ReadingMode.Immediate }))
+                {
+                    foreach (var res in raw.MainModule.Resources)
+                    {
+                        var er = res as EmbeddedResource;
+                        if (er == null) continue;
+                        if (!er.Name.EndsWith(".resources", StringComparison.OrdinalIgnoreCase)) continue;
+
+                        using (var s = er.GetResourceStream())
+                        using (var rr = new System.Resources.ResourceReader(s))
+                        {
+                            var e = rr.GetEnumerator();
+                            while (e.MoveNext())
+                            {
+                                string key = e.Key as string;
+                                if (key == null) continue;
+                                byte[] bytes = TryGetBytes(e.Value);
+                                if (!LooksLikeAssembly(bytes)) continue;
+                                string outPath = Path.Combine(depsDir, key + ".dll");
+                                if (!File.Exists(outPath)) File.WriteAllBytes(outPath, bytes);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { /* 解出失败不致命，解析时仍会尝试框架目录 */ }
+        }
 
         public AssemblyDefinition Resolve(AssemblyNameReference name, ReaderParameters parameters)
         {
@@ -371,12 +694,12 @@ class Patcher
             if (cache.ContainsKey(name.Name)) return cache[name.Name];
 
             // 1) 同目录
-            // 2) 同目录 deps 子目录（预先从资源包解出的依赖）
-            // 3) 程序目录
+            // 2) .pclpatch-deps（刚从目标 exe 解出的依赖）
+            // 3) 上级目录
             var probe = new List<string>
             {
                 baseDir,
-                Path.Combine(baseDir, "deps"),
+                depsDir,
                 Path.Combine(baseDir, ".."),
             };
 
