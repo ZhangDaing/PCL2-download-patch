@@ -245,40 +245,134 @@ class Patcher
                         var mr = list3[i + 1].Operand as MethodReference;
                         if (mr == null || mr.DeclaringType.Name != "Exception") continue;
 
-                        // 该 3 条（ldstr/newobj Exception/throw）位于 catch 之后、
-                        // 外层 finally 的 try 范围末尾。所有正常路径 leave 到这里。
-                        // 不能删除（会让 leave 落入 finally handler，非法），
-                        // 也不能改 nop（会让异常块边界失效）。
-                        // 正确做法：原地改成「读出方法返回值并返回」——
-                        // 等价于正常完成。这里改为 leave 到方法最后一条 ret。
-                        // 最小改动原则：原版这 3 条能通过 JIT，说明结构本身合法，
-                        // 只是 throw 让正常流程失败。只把最后一条 throw 换成 "leave 到方法出口"，
-                        // 前两条（ldstr / newobj）保留但不可达，不破坏任何边界。
-                        // 需要先制造一个合法出口：把 leave 指向 finally 之后追加的 ret。
+                        // 上游把整个「按类型分发到 InstallPack*」的 switch 块删掉了，
+                        // 原位只留一个 throw。因此这里必须重建分发逻辑，而不是简单放行。
+                        // 结构（参照 2.14）：
+                        //   ldloc.4; switch -> 各类型分支; 默认分支=压缩包
+                        // 每个分支: log; call InstallPackXxx(...); stloc.0; leave -> 出口
                         var il3 = m.Body.GetILProcessor();
-                        var realRet2 = il3.Create(OpCodes.Ret);
-                        var loadRes2 = il3.Create(OpCodes.Ldloc_0);
-                        il3.Append(loadRes2);
-                        il3.Append(realRet2);
+                        var exitRet = il3.Create(OpCodes.Ldloc_0);   // 统一出口：装载返回值
+                        var exitRet2 = il3.Create(OpCodes.Ret);
 
-                        // 只替换 throw → leave(loadRes2)，前两条改成 nop（保持在原位置，不影响边界）
-                        list3[i].OpCode = OpCodes.Nop; list3[i].Operand = null;
-                        list3[i + 1].OpCode = OpCodes.Nop; list3[i + 1].Operand = null;
-                        il3.Replace(list3[i + 2], il3.Create(OpCodes.Leave, loadRes2));
-
-                        // 追加了 ldloc.0 压栈，栈深度至少需要 1；但 Cecil 写入时会重算，
-                        // 这里显式抬高，避免重算偏小导致 InvalidProgram
-                        m.Body.MaxStackSize = Math.Max(m.Body.MaxStackSize, 8);
-
-                        // 关键：外层 finally 的 HandlerEnd 为 NULL 表示「延伸到方法末尾」，
-                        // 会把新追加的 ldloc.0/ret 吞进 finally handler（ret 在 handler 内非法）。
-                        // 显式给它一个结束点：append 之前的原末尾（即 endfinally 之后）。
-                        foreach (var eh in m.Body.ExceptionHandlers)
+                        // 方法体内已有 InstallPack* 的真实引用，直接借用
+                        var packMethods = new Dictionary<string, MethodReference>();
+                        foreach (var mm in t.Methods)
                         {
-                            if (eh.HandlerEnd == null && eh.HandlerStart != null)
-                                eh.HandlerEnd = loadRes2;
+                            var nm = mm.Name;
+                            if (!nm.StartsWith("InstallPack")) continue;
+                            if (!packMethods.ContainsKey(nm)) packMethods[nm] = mm;
                         }
-                        done = true;
+
+                        {
+                            // 参照 2.14 的真实布局：
+                            //   分发块（switch + 各分支）紧接 endfinally 之前插入，
+                            //   出口 ldloc.0/ret 放在 finally(handler) 之后。
+                            // 具体：把分发块插到 handler 起点之前，让 finally 落在分发块与出口之间。
+                            Instruction handlerStart = null;
+                            foreach (var eh in m.Body.ExceptionHandlers)
+                            {
+                                if (eh.HandlerType == ExceptionHandlerType.Finally &&
+                                    eh.HandlerEnd == null && eh.HandlerStart != null)
+                                    handlerStart = eh.HandlerStart;
+                            }
+                            if (handlerStart == null)
+                            {
+                                Console.WriteLine("  [3/4] 整合包安装主体 ................ 找不到 finally 入口，跳过");
+                                break;
+                            }
+
+                            // 锚点插在 finally 入口之前（仍在 try 内，紧跟 leave 目标之后）
+                            var anchor = il3.Create(OpCodes.Nop);
+                            il3.InsertBefore(handlerStart, anchor);
+                            Func<Instruction, Instruction> addAfter = (ins) => { il3.InsertAfter(anchor, ins); anchor = ins; return ins; };
+
+                            var switchHead = addAfter(il3.Create(OpCodes.Nop));
+                            addAfter(il3.Create(OpCodes.Ldloc, m.Body.Variables[4]));
+                            var sw = addAfter(il3.Create(OpCodes.Switch, new Instruction[10]));
+
+                            var exitLoad = il3.Create(OpCodes.Ldloc_0);
+                            var exitRetInst = il3.Create(OpCodes.Ret);
+
+                            // 分支构造器：在 anchor 之后追加
+                            Func<string, Instruction> buildBranch = (methodName) =>
+                            {
+                                MethodReference pm;
+                                if (!packMethods.TryGetValue(methodName, out pm)) return null;
+                                var head = il3.Create(OpCodes.Nop);
+                                addAfter(head);
+                                addAfter(il3.Create(OpCodes.Ldarg_0));
+                                addAfter(il3.Create(OpCodes.Ldloc_1));
+                                addAfter(il3.Create(OpCodes.Ldloc_2));
+                                int np = pm.Parameters.Count;
+                                if (np >= 4) addAfter(il3.Create(OpCodes.Ldarg_1));
+                                if (np >= 5) addAfter(il3.Create(OpCodes.Ldarg_2));
+                                addAfter(il3.Create(OpCodes.Call, mod.ImportReference(pm)));
+                                addAfter(il3.Create(OpCodes.Stloc_0));
+                                addAfter(il3.Create(OpCodes.Leave, exitLoad));
+                                return head;
+                            };
+
+                            var bCurse = buildBranch("InstallPackCurseForge");
+                            var bHMCL = buildBranch("InstallPackHMCL");
+                            var bMMC = buildBranch("InstallPackMMC");
+                            var bMCBBS = buildBranch("InstallPackMCBBS");
+                            var bModrinth = buildBranch("InstallPackModrinth");
+                            var bLauncher = buildBranch("InstallPackLauncherPack");
+                            var bCompress = buildBranch("InstallPackCompress");
+
+                            if (bCurse == null || bCompress == null)
+                            {
+                                Console.WriteLine("  [3/4] 整合包安装主体 ................ 缺少 InstallPack 方法，跳过");
+                                break;
+                            }
+
+                            var defaultBranch = bLauncher ?? bCompress;
+                            addAfter(il3.Create(OpCodes.Leave, defaultBranch));
+
+                            // 出口必须落在 finally 之外（2.14 布局：分支 -> finally -> ldloc.0/ret）。
+                            // 分发块目前在 handlerStart 之前，先把 endfinally 找出来，
+                            // 再把 exitLoad/exitRet 插到它之后。
+                            Instruction endFin = null;
+                            foreach (var x in m.Body.Instructions)
+                                if (x.OpCode == OpCodes.Endfinally) endFin = x;
+
+                            if (endFin == null)
+                            {
+                                Console.WriteLine("  [3/4] 整合包安装主体 ................ 找不到 endfinally，跳过");
+                                break;
+                            }
+                            il3.InsertAfter(endFin, exitLoad);
+                            il3.InsertAfter(exitLoad, exitRetInst);
+
+                            ((Instruction[])sw.Operand)[0] = bCurse;
+                            ((Instruction[])sw.Operand)[1] = bHMCL ?? defaultBranch;
+                            ((Instruction[])sw.Operand)[2] = bMMC ?? defaultBranch;
+                            ((Instruction[])sw.Operand)[3] = bMCBBS ?? defaultBranch;
+                            ((Instruction[])sw.Operand)[4] = bModrinth ?? defaultBranch;
+                            for (int k = 5; k < 9; k++) ((Instruction[])sw.Operand)[k] = defaultBranch;
+                            ((Instruction[])sw.Operand)[9] = bLauncher ?? defaultBranch;
+
+                            // 原 throw 位置：改成跳到分发入口
+                            list3[i].OpCode = OpCodes.Nop; list3[i].Operand = null;
+                            list3[i + 1].OpCode = OpCodes.Nop; list3[i + 1].Operand = null;
+                            il3.Replace(list3[i + 2], il3.Create(OpCodes.Leave, switchHead));
+
+                            // 出口必须在 finally 之后（2.14 布局：分支 -> finally -> ldloc.0/ret）。
+                            // 这里 addAfter 已按此顺序追加，因此 exitLoad 自然位于 endfinally 之后；
+                            // finally 的 HandlerEnd 应指向 exitLoad（紧随 endfinally 之后）。
+                            foreach (var eh in m.Body.ExceptionHandlers)
+                            {
+                                if (eh.HandlerType == ExceptionHandlerType.Finally &&
+                                    eh.HandlerEnd == null &&
+                                    eh.HandlerStart != null)
+                                {
+                                    eh.HandlerEnd = exitLoad;
+                                }
+                            }
+
+                            m.Body.MaxStackSize = Math.Max(m.Body.MaxStackSize, 8);
+                            done = true;
+                        }
                         break;
                     }
                 }
