@@ -70,12 +70,9 @@ class Patcher
                 }
             }
 
-            if (hasReal && !hasStub)
-            {
-                Console.WriteLine("该 exe 已是恢复状态，无需重复打补丁。");
-                return 0;
-            }
-            if (!hasStub)
+            // 注意：即使判定“已恢复”，也继续往下走完整流程，
+            // 因为脚本依赖输出文件存在；各补丁点自身会检测并跳过。
+            if (!hasStub && !hasReal)
             {
                 Console.WriteLine("错误: LoaderInit 形态无法识别（既无限制桩也无真实加载器）。");
                 Console.WriteLine("      可能 PCL 版本结构已变化，已中止，目标文件未改动。");
@@ -142,7 +139,14 @@ class Patcher
                 string s = list[i].Operand as string;
                 if (s != null && (s == StubName || s.Contains(Magic))) { start = i; break; }
             }
-            if (start < 0) { Console.WriteLine("错误: 未定位到假任务表达式起点"); return 4; }
+            // 已是恢复状态：跳过本点，继续处理后续补丁点
+            if (start < 0)
+            {
+                if (hasReal) { Console.WriteLine("  [1/4] 下载页原版版本列表 ............ 已是恢复状态"); }
+                else { Console.WriteLine("错误: 未定位到假任务表达式起点"); return 4; }
+            }
+            else
+            {
 
             // 2) 定位表达式终点：其后第一条构造 LoaderTask`2 的 newobj
             int end = -1;
@@ -173,6 +177,7 @@ class Patcher
             foreach (var ins in deadZone) il.Remove(ins);
             il.InsertBefore(list[end + 1], il.Create(OpCodes.Ldsfld, mod.ImportReference(realLoaderField)));
             Console.WriteLine("  [1/4] 下载页原版版本列表 ............ 已恢复");
+            }
 
             // ============================================================
             // 补丁点 2：PageDownloadModify —— 「修改 MC 版本」卡片
@@ -246,16 +251,32 @@ class Patcher
                         // 也不能改 nop（会让异常块边界失效）。
                         // 正确做法：原地改成「读出方法返回值并返回」——
                         // 等价于正常完成。这里改为 leave 到方法最后一条 ret。
-                        Instruction finalRet = null;
-                        foreach (var x in list3)
-                            if (x.OpCode == OpCodes.Ret) finalRet = x;
-                        if (finalRet == null) { Console.WriteLine("  [3/4] 整合包安装主体 ................ 找不到 ret，跳过"); }
-                        else
+                        // 最小改动原则：原版这 3 条能通过 JIT，说明结构本身合法，
+                        // 只是 throw 让正常流程失败。只把最后一条 throw 换成 "leave 到方法出口"，
+                        // 前两条（ldstr / newobj）保留但不可达，不破坏任何边界。
+                        // 需要先制造一个合法出口：把 leave 指向 finally 之后追加的 ret。
+                        var il3 = m.Body.GetILProcessor();
+                        var realRet2 = il3.Create(OpCodes.Ret);
+                        var loadRes2 = il3.Create(OpCodes.Ldloc_0);
+                        il3.Append(loadRes2);
+                        il3.Append(realRet2);
+
+                        // 只替换 throw → leave(loadRes2)，前两条改成 nop（保持在原位置，不影响边界）
+                        list3[i].OpCode = OpCodes.Nop; list3[i].Operand = null;
+                        list3[i + 1].OpCode = OpCodes.Nop; list3[i + 1].Operand = null;
+                        il3.Replace(list3[i + 2], il3.Create(OpCodes.Leave, loadRes2));
+
+                        // 追加了 ldloc.0 压栈，栈深度至少需要 1；但 Cecil 写入时会重算，
+                        // 这里显式抬高，避免重算偏小导致 InvalidProgram
+                        m.Body.MaxStackSize = Math.Max(m.Body.MaxStackSize, 8);
+
+                        // 关键：外层 finally 的 HandlerEnd 为 NULL 表示「延伸到方法末尾」，
+                        // 会把新追加的 ldloc.0/ret 吞进 finally handler（ret 在 handler 内非法）。
+                        // 显式给它一个结束点：append 之前的原末尾（即 endfinally 之后）。
+                        foreach (var eh in m.Body.ExceptionHandlers)
                         {
-                            var il3 = m.Body.GetILProcessor();
-                            il3.Replace(list3[i], il3.Create(OpCodes.Ldloc_0));   // 装载结果
-                            il3.Replace(list3[i + 1], il3.Create(OpCodes.Leave, finalRet));
-                            il3.Remove(list3[i + 2]);                              // 去掉 throw
+                            if (eh.HandlerEnd == null && eh.HandlerStart != null)
+                                eh.HandlerEnd = loadRes2;
                         }
                         done = true;
                         break;
@@ -264,9 +285,22 @@ class Patcher
                 if (done) Console.WriteLine("  [3/4] 整合包安装主体 ................ 已恢复");
                 else
                 {
-                    bool stillBlocked = m != null && m.Body.Instructions.Any(x => x.OpCode == OpCodes.Ldstr
-                        && x.Operand is string && (x.Operand as string) == StubName);
-                    if (m != null && !stillBlocked) Console.WriteLine("  [3/4] 整合包安装主体 ................ 已是恢复状态");
+                    // 只有确认守卫已不存在，才算“已是恢复状态”
+                    bool stillBlocked = false;
+                    if (m != null)
+                    {
+                        var l4 = m.Body.Instructions.ToList();
+                        for (int i = 0; i < l4.Count - 2; i++)
+                        {
+                            if (l4[i].OpCode != OpCodes.Ldstr) continue;
+                            string s2 = l4[i].Operand as string;
+                            if (s2 == null || (s2 != StubName && !s2.Contains(Magic))) continue;
+                            if (l4[i + 1].OpCode == OpCodes.Newobj && l4[i + 2].OpCode == OpCodes.Throw)
+                                stillBlocked = true;
+                        }
+                    }
+                    if (m == null) Console.WriteLine("  [3/4] 整合包安装主体 ................ 未找到，跳过");
+                    else if (!stillBlocked) Console.WriteLine("  [3/4] 整合包安装主体 ................ 已是恢复状态");
                     else Console.WriteLine("  [3/4] 整合包安装主体 ................ 未定位，跳过");
                 }
             }
