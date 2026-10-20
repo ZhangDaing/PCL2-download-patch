@@ -1,0 +1,20 @@
+﻿# 备份文件
+*.orig
+*.bak
+
+# 运行时临时目录（补丁器从目标 exe 解出的依赖）
+.pclpatch-deps/
+.work/
+
+# 调试符号
+*.pdb
+
+# 测试残留
+_test*/
+e2e*/
+sc_test/
+
+# 系统文件
+Thumbs.db
+desktop.ini
+.DS_Store
