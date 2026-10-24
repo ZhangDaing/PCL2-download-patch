@@ -63,8 +63,10 @@ class Verify
             if (m == null) { Console.WriteLine("  [??] ModpackInstall(String,String,String) 未找到"); unknown++; }
             else
             {
+                // 守卫文案形如「为遵守相关法律法规，PCL 不再提供 MC 下载功能……」
+                // （2.99.0.0 为「暂时不再提供」，2.99.0.1 去掉了「暂时」）
                 bool hasGuard = m.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldstr
-                                && i.Operand is string && (i.Operand as string) == StubName);
+                                && i.Operand is string && ((string)i.Operand).Contains(Magic));
                 if (!hasGuard) Console.WriteLine("  [OK] 整合包安装主体");
                 else { Console.WriteLine("  [!!] 整合包安装主体 —— 仍被拦截"); fail++; }
             }
@@ -111,6 +113,19 @@ class Verify
                     ((MethodReference)i.Operand).Name == "Install_Click");
                 if (hasInstall) Console.WriteLine("  [OK] 资源页安装按钮");
                 else { Console.WriteLine("  [!!] 资源页安装按钮 —— 仍只提供保存"); fail++; }
+            }
+        }
+
+        // ---------- 检查点 6：下载页「原版游戏」入口（2.99.0.1 新增） ----------
+        {
+            var t = mod.GetType("PCL.PageDownloadLeft");
+            var ctor = t == null ? null : t.Methods.FirstOrDefault(x => x.Name == ".ctor" && x.HasBody);
+            if (ctor == null) { Console.WriteLine("  [??] PageDownloadLeft..ctor 未找到"); unknown++; }
+            else
+            {
+                bool hasCollapsed = ctor.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldc_I4_2);
+                if (!hasCollapsed) Console.WriteLine("  [OK] 下载页「原版游戏」入口");
+                else { Console.WriteLine("  [!!] 下载页「原版游戏」入口 —— 仍被隐藏"); fail++; }
             }
         }
 

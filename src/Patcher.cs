@@ -142,7 +142,7 @@ class Patcher
             // 已是恢复状态：跳过本点，继续处理后续补丁点
             if (start < 0)
             {
-                if (hasReal) { Console.WriteLine("  [1/4] 下载页原版版本列表 ............ 已是恢复状态"); }
+                if (hasReal) { Console.WriteLine("  [1/6] 下载页原版版本列表 ............ 已是恢复状态"); }
                 else { Console.WriteLine("错误: 未定位到假任务表达式起点"); return 4; }
             }
             else
@@ -176,7 +176,7 @@ class Patcher
             var il = body.GetILProcessor();
             foreach (var ins in deadZone) il.Remove(ins);
             il.InsertBefore(list[end + 1], il.Create(OpCodes.Ldsfld, mod.ImportReference(realLoaderField)));
-            Console.WriteLine("  [1/4] 下载页原版版本列表 ............ 已恢复");
+            Console.WriteLine("  [1/6] 下载页原版版本列表 ............ 已恢复");
             }
 
             // ============================================================
@@ -215,9 +215,9 @@ class Patcher
                         }
                     }
                 }
-                if (done) Console.WriteLine("  [2/4] 修改 MC 版本卡片 .............. 已恢复");
-                else if (already) Console.WriteLine("  [2/4] 修改 MC 版本卡片 .............. 已是恢复状态");
-                else Console.WriteLine("  [2/4] 修改 MC 版本卡片 .............. 未定位，跳过");
+                if (done) Console.WriteLine("  [2/6] 修改 MC 版本卡片 .............. 已恢复");
+                else if (already) Console.WriteLine("  [2/6] 修改 MC 版本卡片 .............. 已是恢复状态");
+                else Console.WriteLine("  [2/6] 修改 MC 版本卡片 .............. 未定位，跳过");
             }
 
             // ============================================================
@@ -277,7 +277,7 @@ class Patcher
                             }
                             if (handlerStart == null)
                             {
-                                Console.WriteLine("  [3/4] 整合包安装主体 ................ 找不到 finally 入口，跳过");
+                                Console.WriteLine("  [3/6] 整合包安装主体 ................ 找不到 finally 入口，跳过");
                                 break;
                             }
 
@@ -322,7 +322,7 @@ class Patcher
 
                             if (bCurse == null || bCompress == null)
                             {
-                                Console.WriteLine("  [3/4] 整合包安装主体 ................ 缺少 InstallPack 方法，跳过");
+                                Console.WriteLine("  [3/6] 整合包安装主体 ................ 缺少 InstallPack 方法，跳过");
                                 break;
                             }
 
@@ -338,7 +338,7 @@ class Patcher
 
                             if (endFin == null)
                             {
-                                Console.WriteLine("  [3/4] 整合包安装主体 ................ 找不到 endfinally，跳过");
+                                Console.WriteLine("  [3/6] 整合包安装主体 ................ 找不到 endfinally，跳过");
                                 break;
                             }
                             il3.InsertAfter(endFin, exitLoad);
@@ -376,7 +376,7 @@ class Patcher
                         break;
                     }
                 }
-                if (done) Console.WriteLine("  [3/4] 整合包安装主体 ................ 已恢复");
+                if (done) Console.WriteLine("  [3/6] 整合包安装主体 ................ 已恢复");
                 else
                 {
                     // 只有确认守卫已不存在，才算“已是恢复状态”
@@ -393,9 +393,9 @@ class Patcher
                                 stillBlocked = true;
                         }
                     }
-                    if (m == null) Console.WriteLine("  [3/4] 整合包安装主体 ................ 未找到，跳过");
-                    else if (!stillBlocked) Console.WriteLine("  [3/4] 整合包安装主体 ................ 已是恢复状态");
-                    else Console.WriteLine("  [3/4] 整合包安装主体 ................ 未定位，跳过");
+                    if (m == null) Console.WriteLine("  [3/6] 整合包安装主体 ................ 未找到，跳过");
+                    else if (!stillBlocked) Console.WriteLine("  [3/6] 整合包安装主体 ................ 已是恢复状态");
+                    else Console.WriteLine("  [3/6] 整合包安装主体 ................ 未定位，跳过");
                 }
             }
 
@@ -415,8 +415,8 @@ class Patcher
                     i.OpCode == OpCodes.Call && i.Operand is MethodReference &&
                     ((MethodReference)i.Operand).Name == "RunInThread");
 
-                if (entry == null) Console.WriteLine("  [4/4] 整合包安装入口 ................ 未找到，跳过");
-                else if (already) Console.WriteLine("  [4/4] 整合包安装入口 ................ 已是恢复状态");
+                if (entry == null) Console.WriteLine("  [4/6] 整合包安装入口 ................ 未找到，跳过");
+                else if (already) Console.WriteLine("  [4/6] 整合包安装入口 ................ 已是恢复状态");
                 else
                 {
                     // 从本 exe 其它方法里借用一个现存的 SelectFile 引用（签名完全一致）
@@ -444,7 +444,7 @@ class Patcher
                     if (selectFile == null || runInThread == null || lambda == null ||
                         fileField == null || closureCtor == null)
                     {
-                        Console.WriteLine("  [4/4] 整合包安装入口 ................ 依赖不全，跳过");
+                        Console.WriteLine("  [4/6] 整合包安装入口 ................ 依赖不全，跳过");
                     }
                     else
                     {
@@ -466,7 +466,7 @@ class Patcher
 
                         var nullableT = selectFile.Parameters[3].ParameterType as GenericInstanceType;
                         var oneOfT = nullableT == null ? null : nullableT.GenericArguments[0] as GenericInstanceType;
-                        if (oneOfT == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 类型异常，跳过"); goto SkipFour; }
+                        if (oneOfT == null) { Console.WriteLine("  [4/6] 整合包安装入口 ................ 类型异常，跳过"); goto SkipFour; }
 
                         n2.Emit(OpCodes.Ldstr, "选择整合包压缩文件");
                         n2.Emit(OpCodes.Ldc_I4_0);
@@ -482,7 +482,7 @@ class Patcher
                             gp = oneOfDef.GenericParameters[1]; // T2
                         }
                         catch { }
-                        if (gp == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 泛型占位解析失败，跳过"); goto SkipFour; }
+                        if (gp == null) { Console.WriteLine("  [4/6] 整合包安装入口 ................ 泛型占位解析失败，跳过"); goto SkipFour; }
 
                         // 直接借用 ModJava::ManuallyImportJava 里那条已验证正确的
                         // op_Implicit / Nullable::.ctor / SelectFile 引用，
@@ -529,7 +529,7 @@ class Patcher
                             }
                             if (firstOrDefault != null) break;
                         }
-                        if (firstOrDefault == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 缺 FirstOrDefault，跳过"); goto SkipFour; }
+                        if (firstOrDefault == null) { Console.WriteLine("  [4/6] 整合包安装入口 ................ 缺 FirstOrDefault，跳过"); goto SkipFour; }
 
                         n2.Emit(OpCodes.Call, mod.ImportReference(firstOrDefault));
                         n2.Emit(OpCodes.Stloc, fileVar);
@@ -555,7 +555,7 @@ class Patcher
                             }
                             if (isEmpty != null) break;
                         }
-                        if (isEmpty == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 缺 IsNullOrEmpty，跳过"); goto SkipFour; }
+                        if (isEmpty == null) { Console.WriteLine("  [4/6] 整合包安装入口 ................ 缺 IsNullOrEmpty，跳过"); goto SkipFour; }
 
                         n2.Emit(OpCodes.Ldloc, cv);
                         n2.Emit(OpCodes.Ldfld, mod.ImportReference(fileField));
@@ -566,7 +566,7 @@ class Patcher
                         n2.Emit(OpCodes.Ldftn, mod.ImportReference(lambda));
                         TypeReference actionType = null;
                         foreach (var tr in mod.GetTypeReferences()) if (tr.Name == "Action") { actionType = tr; break; }
-                        if (actionType == null) { Console.WriteLine("  [4/4] 整合包安装入口 ................ 缺 Action，跳过"); goto SkipFour; }
+                        if (actionType == null) { Console.WriteLine("  [4/6] 整合包安装入口 ................ 缺 Action，跳过"); goto SkipFour; }
                         var ac = new MethodReference(".ctor", mod.TypeSystem.Void, actionType) { HasThis = true };
                         ac.Parameters.Add(new ParameterDefinition(mod.TypeSystem.Object));
                         ac.Parameters.Add(new ParameterDefinition(mod.TypeSystem.IntPtr));
@@ -575,7 +575,7 @@ class Patcher
 
                         n2.Append(skip);
                         entry.Body = nb;
-                        Console.WriteLine("  [4/4] 整合包安装入口 ................ 已恢复");
+                        Console.WriteLine("  [4/6] 整合包安装入口 ................ 已恢复");
                     }
                 SkipFour: ;
                 }
@@ -601,7 +601,7 @@ class Patcher
                         ((MethodReference)x.Operand).Name == "Install_Click");
                     if (alreadyPatched5)
                     {
-                        Console.WriteLine("  [5/5] 资源页安装按钮 ................ 已是恢复状态");
+                        Console.WriteLine("  [5/6] 资源页安装按钮 ................ 已是恢复状态");
                         goto AfterPoint5;
                     }
 
@@ -639,7 +639,7 @@ class Patcher
 
                         if (ldftnIns == null)
                         {
-                            Console.WriteLine("  [5/5] 资源页安装按钮 ................ 形态不符，跳过");
+                            Console.WriteLine("  [5/6] 资源页安装按钮 ................ 形态不符，跳过");
                         }
                         else
                         {
@@ -685,10 +685,76 @@ class Patcher
                     }
                 }
                 Console.WriteLine(done5
-                    ? "  [5/5] 资源页安装按钮 ................ 已恢复"
-                    : "  [5/5] 资源页安装按钮 ................ 未定位，跳过");
+                    ? "  [5/6] 资源页安装按钮 ................ 已恢复"
+                    : "  [5/6] 资源页安装按钮 ................ 未定位，跳过");
             }
             AfterPoint5: ;
+
+            // ============================================================
+            // 补丁点 6（2.99.0.1 新增）：PageDownloadLeft 构造函数
+            // 新增的构造函数隐藏了「原版游戏」项与「社区资源」标题，
+            // 并把默认页切到 DownloadMod。把 4 个常量改回原值即可。
+            // ============================================================
+            {
+                var t = mod.GetType("PCL.PageDownloadLeft");
+                var ctor = t == null ? null : t.Methods.FirstOrDefault(x => x.Name == ".ctor" && x.HasBody);
+                bool done6 = false;
+
+                if (ctor != null)
+                {
+                    var list6 = ctor.Body.Instructions.ToList();
+
+                    // 已是恢复状态：构造函数里不再有 ldc.i4.2（Collapsed / DownloadMod）
+                    bool hasCollapsed = list6.Any(x => x.OpCode == OpCodes.Ldc_I4_2);
+                    if (!hasCollapsed)
+                    {
+                        Console.WriteLine("  [6/6] 下载页「原版游戏」入口 ........ 已是恢复状态");
+                        goto AfterPoint6;
+                    }
+
+                    for (int i = 0; i < list6.Count - 1; i++)
+                    {
+                        if (list6[i].OpCode != OpCodes.Ldc_I4_2) continue;
+                        var next = list6[i + 1];
+                        var mr = next.Operand as MethodReference;
+                        var fr = next.Operand as FieldReference;
+
+                        // ItemInstall / LabResource：Collapsed(2) -> Visible(0)
+                        if (next.OpCode == OpCodes.Callvirt && mr != null && mr.Name == "set_Visibility")
+                        {
+                            list6[i].OpCode = OpCodes.Ldc_I4_0;
+                            list6[i].Operand = null;
+                            done6 = true;
+                        }
+                        // PageID：DownloadMod(2) -> DownloadInstall(0)
+                        else if (next.OpCode == OpCodes.Stfld && fr != null && fr.Name == "PageID")
+                        {
+                            list6[i].OpCode = OpCodes.Ldc_I4_0;
+                            list6[i].Operand = null;
+                            done6 = true;
+                        }
+                    }
+
+                    // ItemMod.Checked：true(1) -> false(0)，让 XAML 里的 ItemInstall.Checked 生效
+                    for (int i = 0; i < list6.Count - 1; i++)
+                    {
+                        if (list6[i].OpCode != OpCodes.Ldc_I4_1) continue;
+                        var next = list6[i + 1];
+                        var mr = next.Operand as MethodReference;
+                        if (next.OpCode == OpCodes.Callvirt && mr != null && mr.Name == "set_Checked")
+                        {
+                            list6[i].OpCode = OpCodes.Ldc_I4_0;
+                            list6[i].Operand = null;
+                            done6 = true;
+                        }
+                    }
+                }
+
+                Console.WriteLine(done6
+                    ? "  [6/6] 下载页「原版游戏」入口 ........ 已恢复"
+                    : "  [6/6] 下载页「原版游戏」入口 ........ 未定位，跳过");
+            }
+            AfterPoint6: ;
 
             // ---------- 写盘 ----------
             asm.Write(tmp);
